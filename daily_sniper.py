@@ -7,7 +7,7 @@ import time
 # ==========================================
 # 1. 設定區 (請將下方網址替換為您 n8n Webhook 的 Test URL)
 # ==========================================
-WEBHOOK_URL = "https://james15211521.zeabur.app/webhook-test/9c373521-2ad5-4b49-af47-0de94910867c"
+WEBHOOK_URL = "https://james15211521.zeabur.app/webhook/9c373521-2ad5-4b49-af47-0de94910867c"
 
 def get_latest_twse_chips():
     """自動往回尋找最近一個交易日的證交所法人買賣超資料"""
