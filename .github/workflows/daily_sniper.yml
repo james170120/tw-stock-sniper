@@ -1,0 +1,29 @@
+name: Daily Stock Sniper
+
+on:
+  schedule:
+    # 這是 UTC 時間。UTC 06:30 等於台灣時間 (UTC+8) 的 14:30 (台股收盤後一小時)
+    # 1-5 代表週一到週五執行
+    - cron: '50 23 * * 0-4'
+  workflow_dispatch: # 允許您在 GitHub 網頁上手動點擊執行，方便隨時測試
+
+jobs:
+  run-sniper:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 取得程式碼
+        uses: actions/checkout@v4
+        
+      - name: 設定 Python 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      - name: 安裝所需套件 (requests, yfinance, pandas)
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests yfinance pandas
+          
+      - name: 執行每日狙擊腳本
+        run: python daily_sniper.py
