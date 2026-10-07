@@ -5,43 +5,52 @@ import datetime
 import time
 
 # ==========================================
-# 1. 設定區 (請將下方網址替換為您 n8n Webhook 的 Test URL)
+# 1. 設定區 (請將下方網址替換為您 n8n Webhook 的 Production URL)
 # ==========================================
-WEBHOOK_URL = "https://james15211521.zeabur.app/webhook/9c373521-2ad5-4b49-af47-0de94910867c"
+WEBHOOK_URL = "https://您n8n的網址/webhook/..."
 
 def get_latest_twse_chips():
-    """自動往回尋找最近一個交易日的證交所法人買賣超資料"""
+    """加上 Headers 偽裝成瀏覽器，並嚴格對齊台灣時區"""
     print("🔄 正在取得上市法人籌碼資料...")
+    
+    # 防護一：強制使用台灣時區 (UTC+8)，不受 GitHub 伺服器影響
+    tw_tz = datetime.timezone(datetime.timedelta(hours=8))
+    now_tw = datetime.datetime.now(tw_tz)
+    
+    # 防護二：偽裝成正常瀏覽器，避免被證交所阻擋
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
+    }
+    
     for i in range(7):
-        d = datetime.datetime.now() - datetime.timedelta(days=i)
+        d = now_tw - datetime.timedelta(days=i)
         if d.weekday() >= 5: continue # 跳過週末
         
         date_str = d.strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/fund/T86?response=json&date={date_str}&selectType=ALL"
         
         try:
-            res = requests.get(url, timeout=10).json()
+            res = requests.get(url, headers=headers, timeout=10).json()
             if res.get('stat') == 'OK' and res.get('data'):
                 print(f"✅ 成功取得 {date_str} 籌碼資料！")
-                return res['data']
+                return date_str, res['data'] # ⭐️ 回傳具體日期，供後續對齊使用
         except Exception as e:
-            continue
-        time.sleep(1)
-    return None
+            print(f"⚠️ 嘗試 {date_str} 發生連線錯誤，自動退回前一日...")
+            pass
+        time.sleep(1.5)
+    return None, None
 
 def main():
-    raw_data = get_latest_twse_chips()
+    chip_date, raw_data = get_latest_twse_chips()
     if not raw_data:
         print("❌ 無法取得近期籌碼資料。")
         return
         
-    # 2. 初步籌碼過濾：只挑選「外資或投信有買超」的普通股
     target_stocks = {}
     for row in raw_data:
         sid, name = row[0].strip(), row[1].strip()
-        if len(sid) != 4: continue # 只抓四碼一般股票
+        if len(sid) != 4: continue 
         
-        # 證交所外資欄位(idx 4), 投信欄位(idx 10)
         f_lots = int(row[4].replace(',', '')) // 1000 if row[4] else 0
         t_lots = int(row[10].replace(',', '')) // 1000 if row[10] else 0
         
@@ -51,40 +60,46 @@ def main():
                 "chip_text": f"外資買 {f_lots} 張, 投信買 {t_lots} 張"
             }
             
-    print(f"📊 籌碼初篩完成，共有 {len(target_stocks)} 檔獲法人買進。開始下載近10日量價進行策略運算...")
+    print(f"📊 籌碼初篩完成，開始下載近15日量價進行策略運算 (基準日: {chip_date})...")
     
-    # 3. 透過 yfinance 快速下載這幾百檔股票的近 10 日 K 線
     tickers = [f"{sid}.TW" for sid in target_stocks.keys()]
-    # yfinance 批次下載速度極快
-    hist_data = yf.download(tickers, period="10d", group_by='ticker', progress=False)
+    hist_data = yf.download(tickers, period="15d", group_by='ticker', progress=False)
     
     golden_list = []
     
-    # 4. 執行黃金策略：實體大紅K (>4%) + 溫和放量 (1.2~2.5倍)
+    # 將籌碼日期轉換為 yfinance 可比對的 YYYY-MM-DD 格式
+    target_iso_date = f"{chip_date[:4]}-{chip_date[4:6]}-{chip_date[6:]}"
+    
     for sid, info in target_stocks.items():
         ticker = f"{sid}.TW"
         if ticker not in hist_data: continue
         
+        # 防護三：核心修正！強制將 K 線資料切斷在「籌碼日期」當天，確保價量與籌碼完全同步
         df = hist_data[ticker].dropna()
-        if len(df) < 6: continue # 資料不足無法計算 5 日均量
+        df = df[:target_iso_date].copy()
         
-        # 計算 5 日均量
+        if len(df) < 6: continue
+        
+        # 再次驗證：確保 K 線的最後一筆，真的是我們抓到籌碼的那一天
+        latest = df.iloc[-1]
+        if latest.name.strftime('%Y%m%d') != chip_date:
+            continue 
+        
+        # 只有日期對齊，才開始算均線與漲幅
         df['Vol_MA5'] = df['Volume'].rolling(5).mean()
+        vol_ma5 = latest['Vol_MA5']
         
-        latest = df.iloc[-1] # 取最新一個交易日
         open_p = latest['Open']
         close_p = latest['Close']
         vol = latest['Volume']
-        vol_ma5 = latest['Vol_MA5']
         
         if open_p == 0 or vol_ma5 == 0: continue
         
         k_body = close_p / open_p
         vol_ratio = vol / vol_ma5
         
-        # 💥 策略核心條件判斷 💥
-        cond_red_k = k_body > 1.04           # 實體大紅K
-        cond_vol = 1.2 <= vol_ratio <= 2.5   # 溫和放量，避開極端爆量引發隔日沖
+        cond_red_k = k_body > 1.04           
+        cond_vol = 1.2 <= vol_ratio <= 2.5   
         
         if cond_red_k and cond_vol:
             golden_list.append({
@@ -94,9 +109,8 @@ def main():
             })
             print(f"🎯 鎖定目標: {sid} {info['name']} (漲幅: {(k_body-1)*100:.1f}%, 量比: {vol_ratio:.1f}倍)")
 
-    # 5. 將結果發送給 n8n
     if not golden_list:
-        print("🔍 今日無符合大紅K與溫和放量策略的標的。")
+        print(f"🔍 {chip_date} 無符合大紅K與溫和放量策略的標的。")
     else:
         print(f"\n🚀 準備將 {len(golden_list)} 檔精選標的發送至 n8n...")
         try:
