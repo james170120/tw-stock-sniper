@@ -1,11 +1,7 @@
 name: Daily Stock Sniper
 
 on:
-  schedule:
-    # 這是 UTC 時間。UTC 06:30 等於台灣時間 (UTC+8) 的 14:30 (台股收盤後一小時)
-    # 1-5 代表週一到週五執行
-    - cron: '50 23 * * 0-4'
-  workflow_dispatch: # 允許您在 GitHub 網頁上手動點擊執行，方便隨時測試
+  workflow_dispatch: # 僅允許 API 或手動觸發
 
 jobs:
   run-sniper:
