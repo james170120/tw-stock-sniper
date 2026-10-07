@@ -5,7 +5,7 @@ import datetime
 import time
 
 # ==========================================
-# 1. 設定區 (請將下方網址替換為您 n8n Webhook 的 Production URL)
+# 1. 設定區 (已替換為您的 n8n Production URL)
 # ==========================================
 WEBHOOK_URL = "https://james15211521.zeabur.app/webhook/9c373521-2ad5-4b49-af47-0de94910867c"
 
@@ -13,18 +13,18 @@ def get_latest_twse_chips():
     """加上 Headers 偽裝成瀏覽器，並嚴格對齊台灣時區"""
     print("🔄 正在取得上市法人籌碼資料...")
     
-    # 防護一：強制使用台灣時區 (UTC+8)，不受 GitHub 伺服器影響
+    # 防護一：強制使用台灣時區 (UTC+8)
     tw_tz = datetime.timezone(datetime.timedelta(hours=8))
     now_tw = datetime.datetime.now(tw_tz)
     
-    # 防護二：偽裝成正常瀏覽器，避免被證交所阻擋
+    # 防護二：偽裝成正常瀏覽器
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
     }
     
     for i in range(7):
         d = now_tw - datetime.timedelta(days=i)
-        if d.weekday() >= 5: continue # 跳過週末
+        if d.weekday() >= 5: continue 
         
         date_str = d.strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/fund/T86?response=json&date={date_str}&selectType=ALL"
@@ -33,7 +33,7 @@ def get_latest_twse_chips():
             res = requests.get(url, headers=headers, timeout=10).json()
             if res.get('stat') == 'OK' and res.get('data'):
                 print(f"✅ 成功取得 {date_str} 籌碼資料！")
-                return date_str, res['data'] # ⭐️ 回傳具體日期，供後續對齊使用
+                return date_str, res['data'] 
         except Exception as e:
             print(f"⚠️ 嘗試 {date_str} 發生連線錯誤，自動退回前一日...")
             pass
@@ -63,32 +63,32 @@ def main():
     print(f"📊 籌碼初篩完成，開始下載近15日量價進行策略運算 (基準日: {chip_date})...")
     
     tickers = [f"{sid}.TW" for sid in target_stocks.keys()]
-    hist_data = yf.download(tickers, period="15d", group_by='ticker', progress=False)
+    
+    # ⭐️ 修正 2：加入 threads=False 防止 yfinance 在 GitHub 上卡死
+    hist_data = yf.download(tickers, period="15d", group_by='ticker', progress=False, threads=False)
     
     golden_list = []
     
-    # 將籌碼日期轉換為 yfinance 可比對的 YYYY-MM-DD 格式
     target_iso_date = f"{chip_date[:4]}-{chip_date[4:6]}-{chip_date[6:]}"
     
     for sid, info in target_stocks.items():
         ticker = f"{sid}.TW"
         if ticker not in hist_data: continue
         
-        # 防護三：核心修正！強制將 K 線資料切斷在「籌碼日期」當天，確保價量與籌碼完全同步
         df = hist_data[ticker].dropna()
         df = df[:target_iso_date].copy()
         
         if len(df) < 6: continue
         
-        # 再次驗證：確保 K 線的最後一筆，真的是我們抓到籌碼的那一天
+        # ⭐️ 修正 1：必須先算均線，再抽取 latest，否則會 KeyError
+        df['Vol_MA5'] = df['Volume'].rolling(5).mean()
         latest = df.iloc[-1]
+        
+        # 再次驗證：確保 K 線的最後一筆，真的是我們抓到籌碼的那一天
         if latest.name.strftime('%Y%m%d') != chip_date:
             continue 
         
-        # 只有日期對齊，才開始算均線與漲幅
-        df['Vol_MA5'] = df['Volume'].rolling(5).mean()
         vol_ma5 = latest['Vol_MA5']
-        
         open_p = latest['Open']
         close_p = latest['Close']
         vol = latest['Volume']
