@@ -7,7 +7,7 @@ import time
 # ==========================================
 # 1. 設定區 (請將下方網址替換為您 n8n Webhook 的 Production URL)
 # ==========================================
-WEBHOOK_URL = "https://您n8n的網址/webhook/..."
+WEBHOOK_URL = "https://james15211521.zeabur.app/webhook/9c373521-2ad5-4b49-af47-0de94910867c"
 
 def get_latest_twse_chips():
     """加上 Headers 偽裝成瀏覽器，並嚴格對齊台灣時區"""
